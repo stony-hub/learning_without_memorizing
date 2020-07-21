@@ -40,7 +40,10 @@ class Model:
 
             ########################################################
 
+            cnt = 0
             for x, y in train_loader:
+                cnt += 1
+                if cnt > 5: break
                 x, y = x.cuda(), y.cuda()
                 y_pred = self.net_new(x)
                 loss_C = F.cross_entropy(y_pred, y).mean()
@@ -114,6 +117,7 @@ class Model:
             losses, loss_Cs, loss_Ds, loss_ADs = [], [], [], []
 
             ########################################################
+            
             for x, y in train_loader:
                 x, y = x.cuda(), y.cuda()
                 y_pred_old = self.net_old(x)
@@ -121,9 +125,9 @@ class Model:
 
                 loss_C = F.cross_entropy(y_pred_new, y).mean()
                 
-                yn, yo = y_pred_new[:, :ntask * self.class_per_task], y_pred_old[:, :ntask * self.class_per_task]
-                yn, yo = self.T_modify(yn), self.T_modify(yo)
-                loss_D = F.binary_cross_entropy_with_logits(yn, yo.sigmoid(), reduction='none').sum(dim=-1).mean()
+                yn, yo = y_pred_new[:, :ntask * self.class_per_task], y_pred_old[:, :ntask * self.class_per_task].detach()
+                yn, yo = self.T_modify(yn.sigmoid()), self.T_modify(yo.sigmoid())
+                loss_D = F.binary_cross_entropy(yn, yo, reduction='none').sum(dim=-1).mean()
                 
                 old_map = self.normlized_grad_cam(self.net_old.feature, y_pred_old)
                 new_map = self.normlized_grad_cam(self.net_new.feature, y_pred_new)
