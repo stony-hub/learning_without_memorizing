@@ -97,6 +97,11 @@ class Model:
         cam = (grads * weight).sum(dim=1)
         n_cam = cam / cam.norm()
         return n_cam
+    
+    def T_modify(self, x):
+        x = x ** (1 / 2)
+        x = x / x.sum(dim=-1).unsqueeze(dim=-1)
+        return x
 
     def transfer(self, ntask, niter, train_loader, lr, beta, gamma):
         opt = Adam(self.net_new.parameters(), lr=lr)
@@ -115,9 +120,11 @@ class Model:
                 y_pred_new = self.net_new(x)
 
                 loss_C = F.cross_entropy(y_pred_new, y).mean()
-                loss_D = F.binary_cross_entropy_with_logits(y_pred_new[:, :ntask * self.class_per_task],
-                                                            y_pred_old[:, :ntask * self.class_per_task].sigmoid(),
-                                                            reduction='none').sum(dim=-1).mean()
+                
+                yn, yo = y_pred_new[:, :ntask * self.class_per_task], y_pred_old[:, :ntask * self.class_per_task]
+                yn, yo = self.T_modify(yn), self.T_modify(yo)
+                loss_D = F.binary_cross_entropy_with_logits(yn, yo.sigmoid(), reduction='none').sum(dim=-1).mean()
+                
                 old_map = self.normlized_grad_cam(self.net_old.feature, y_pred_old)
                 new_map = self.normlized_grad_cam(self.net_new.feature, y_pred_new)
                 loss_AD = (old_map - new_map).norm(p=1, dim=(1, 2)).mean()
