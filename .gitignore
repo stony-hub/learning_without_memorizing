@@ -3,6 +3,7 @@ data
 model
 sample
 log
+run.bat
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
