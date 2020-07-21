@@ -40,10 +40,7 @@ class Model:
 
             ########################################################
 
-            cnt = 0
             for x, y in train_loader:
-                cnt += 1
-                if cnt > 5: break
                 x, y = x.cuda(), y.cuda()
                 y_pred = self.net_new(x)
                 loss_C = F.cross_entropy(y_pred, y).mean()
