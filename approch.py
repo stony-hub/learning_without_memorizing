@@ -36,7 +36,7 @@ class Model:
             
             self.net_new.train()
 
-            losses = []
+            losses, loss_Cs = [], []
 
             ########################################################
 
@@ -44,22 +44,26 @@ class Model:
                 x, y = x.cuda(), y.cuda()
                 y_pred = self.net_new(x)
                 loss_C = F.cross_entropy(y_pred, y).mean()
+                loss = loss_C
 
                 opt.zero_grad()
-                loss_C.backward()
+                loss.backward()
                 opt.step()
 
-                losses.append(loss_C.item())
+                losses.append(loss.item())
+                loss_Cs.append(loss_C.item())
 
             ########################################################
 
             loss = np.array(losses, dtype=np.float).mean()
+            loss_C = np.array(loss_Cs, dtype=np.float).mean()
             
             print('epoch %d, task %d' % (epoch, 0))
 
             self.writer.add_scalar('train_loss', loss, epoch)
+            self.writer.add_scalar('train_loss_C', loss_C, epoch)
 
-            if epoch % 2 == 1:
+            if epoch % 4 == 1:
                 self.test(epoch)
 
         ############################################################
@@ -102,7 +106,7 @@ class Model:
             self.net_new.train()
             self.net_old.train()
 
-            losses = []
+            losses, loss_Cs, loss_Ds, loss_ADs = [], [], [], []
 
             ########################################################
             for x, y in train_loader:
@@ -125,18 +129,27 @@ class Model:
                 opt.step()
 
                 losses.append(loss.item())
+                loss_Cs.append(loss_C.item())
+                loss_Ds.append(loss_D.item())
+                loss_ADs.append(loss_AD.item())
 
                 torch.cuda.empty_cache()
 
             ########################################################
 
             loss = np.array(losses, dtype=np.float).mean()
+            loss_C = np.array(loss_Cs, dtype=np.float).mean()
+            loss_D = np.array(loss_Ds, dtype=np.float).mean()
+            loss_AD = np.array(loss_ADs, dtype=np.float).mean()
             
             print('epoch %d, task %d' % (epoch, ntask))
 
             self.writer.add_scalar('train_loss', loss, epoch + niter * ntask)
+            self.writer.add_scalar('train_loss_C', loss_C, epoch + niter * ntask)
+            self.writer.add_scalar('train_loss_D', loss_D, epoch + niter * ntask)
+            self.writer.add_scalar('train_loss_AD', loss_AD, epoch + niter * ntask)
 
-            if epoch % 2 == 1:
+            if epoch % 4 == 1:
                 self.test(epoch + niter * ntask)
 
     def test(self, total_epoch):
