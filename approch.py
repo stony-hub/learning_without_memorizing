@@ -63,7 +63,7 @@ class Model:
             self.writer.add_scalar('train_loss', loss, epoch)
             self.writer.add_scalar('train_loss_C', loss_C, epoch)
 
-            if epoch % 4 == 1:
+            if epoch % 2 == 0:
                 self.test(epoch)
 
         ############################################################
@@ -97,11 +97,6 @@ class Model:
         cam = (grads * weight).sum(dim=1)
         n_cam = cam / cam.norm()
         return n_cam
-    
-    def T_modify(self, x):
-        x = x ** (1 / 2)
-        x = x / x.sum(dim=-1).unsqueeze(dim=-1)
-        return x
 
     def transfer(self, ntask, niter, train_loader, lr, beta, gamma):
         opt = Adam(self.net_new.parameters(), lr=lr)
@@ -123,7 +118,7 @@ class Model:
                 loss_C = F.cross_entropy(y_pred_new, y).mean()
                 
                 yn, yo = y_pred_new[:, :ntask * self.class_per_task], y_pred_old[:, :ntask * self.class_per_task].detach()
-                yn, yo = self.T_modify(yn.sigmoid()), self.T_modify(yo.sigmoid())
+                yn, yo = (yn / 2).sigmoid(), (yo / 2).sigmoid()
                 loss_D = F.binary_cross_entropy(yn, yo, reduction='none').sum(dim=-1).mean()
                 
                 old_map = self.normlized_grad_cam(self.net_old.feature, y_pred_old)
@@ -157,7 +152,7 @@ class Model:
             self.writer.add_scalar('train_loss_D', loss_D, epoch + niter * ntask)
             self.writer.add_scalar('train_loss_AD', loss_AD, epoch + niter * ntask)
 
-            if epoch % 4 == 1:
+            if epoch % 2 == 0:
                 self.test(epoch + niter * ntask)
 
     def test(self, total_epoch):
@@ -169,9 +164,10 @@ class Model:
                 for x, y in test_loader:
                     x, y = x.cuda(), y.numpy()
                     y_pred = self.net_new(x)
-                    y_pred = y_pred.cpu().numpy().argmax(axis=-1)
+                    y_pred, y_ = y_pred.cpu().numpy().argmax(axis=-1), y_pred
                     correct_num += (y_pred == y).sum()
                     total += y.shape[0]
+                print(y_.mean(dim=0))
                 acc = correct_num / total * 100
                 cor_num += correct_num
                 total_num += total
