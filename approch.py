@@ -40,7 +40,10 @@ class Model:
 
             ########################################################
 
+            cnt = 0
             for x, y in train_loader:
+                cnt += 1
+                if cnt > 5: break
                 x, y = x.cuda(), y.cuda()
                 y_pred = self.net_new(x)
                 loss_C = F.cross_entropy(y_pred, y).mean()
@@ -97,6 +100,27 @@ class Model:
         cam = (grads * weight).sum(dim=1)
         n_cam = cam / cam.norm()
         return n_cam
+    
+    def grad_cam_loss(self, feature_o, out_o, feature_n, out_n):
+        batch = out_n.size()[0]
+        index = np.argmax(out_n.detach().cpu().numpy(), axis=-1)
+        onehot = np.zeros((batch, out_n.size()[1]), dtype=np.float32)
+        onehot[np.arange(0, batch), index] = 1
+        onehot = torch.from_numpy(onehot).to(out_n.device)
+        out_o, out_n = torch.sum(onehot * out_o), torch.sum(onehot * out_n)
+        
+        grads_o = torch.autograd.grad(out_o, feature_o)[0]
+        grads_n = torch.autograd.grad(out_n, feature_n, create_graph=True)[0]
+        weight_o = grads_o.mean(dim=(2, 3)).unsqueeze(-1).unsqueeze(-1)
+        weight_n = grads_n.mean(dim=(2, 3)).unsqueeze(-1).unsqueeze(-1)
+        
+        cam_o = (grads_o * weight_o).sum(dim=1)
+        cam_o = cam_o / cam_o.norm()
+        cam_n = (grads_n * weight_n).sum(dim=1)
+        cam_n = cam_n / cam_n.norm()
+        
+        loss_AD = (cam_o - cam_n).norm(p=1, dim=(1, 2)).mean()
+        return loss_AD
 
     def transfer(self, ntask, niter, train_loader, lr, beta, gamma):
         opt = Adam(self.net_new.parameters(), lr=lr)
@@ -109,8 +133,10 @@ class Model:
             losses, loss_Cs, loss_Ds, loss_ADs = [], [], [], []
 
             ########################################################
-            
+            cnt = 0
             for x, y in train_loader:
+                cnt += 1
+                if cnt > 5: break
                 x, y = x.cuda(), y.cuda()
                 y_pred_old = self.net_old(x)
                 y_pred_new = self.net_new(x)
@@ -118,12 +144,10 @@ class Model:
                 loss_C = F.cross_entropy(y_pred_new, y).mean()
                 
                 yn, yo = y_pred_new[:, :ntask * self.class_per_task], y_pred_old[:, :ntask * self.class_per_task].detach()
-                yn, yo = (yn / 2).sigmoid(), (yo / 2).sigmoid()
-                loss_D = F.binary_cross_entropy(yn, yo, reduction='none').sum(dim=-1).mean()
+                yn_p, yo_p = (yn / 2).sigmoid(), (yo / 2).sigmoid()
+                loss_D = F.binary_cross_entropy(yn_p, yo_p, reduction='none').sum(dim=-1).mean()
                 
-                old_map = self.normlized_grad_cam(self.net_old.feature, y_pred_old)
-                new_map = self.normlized_grad_cam(self.net_new.feature, y_pred_new)
-                loss_AD = (old_map - new_map).norm(p=1, dim=(1, 2)).mean()
+                loss_AD = self.grad_cam_loss(self.net_old.feature, y_pred_old, self.net_new.feature, y_pred_new)
 
                 loss = loss_C + loss_D * beta + loss_AD * gamma
 
