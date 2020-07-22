@@ -85,21 +85,6 @@ class Model:
 
             # transferring
             self.transfer(ntask, niter, train_loader, lr, beta, gamma)
-
-    def normlized_grad_cam(self, feature, out):
-        batch = out.size()[0]
-        index = np.argmax(out.detach().cpu().numpy(), axis=-1)
-        onehot = np.zeros((out.size()[0], out.size()[1]), dtype=np.float32)
-        onehot[np.arange(0, batch), index] = 1
-        onehot = torch.from_numpy(onehot).to(out.device)
-        out = torch.sum(onehot * out)
-        
-        grads = torch.autograd.grad(out, feature, create_graph=True)[0]  # little trick
-        weight = grads.mean(dim=(2, 3)).unsqueeze(-1).unsqueeze(-1)
-
-        cam = (grads * weight).sum(dim=1)
-        n_cam = cam / cam.norm()
-        return n_cam
     
     def grad_cam_loss(self, feature_o, out_o, feature_n, out_n):
         batch = out_n.size()[0]
