@@ -104,6 +104,8 @@ class Model:
         cam_n = (grads_n * weight_n).sum(dim=1)
         cam_n = cam_n / cam_n.norm()
         
+        cam_o, cam_n = F.relu(cam_o), F.relu(cam_n)
+        
         loss_AD = (cam_o - cam_n).norm(p=1, dim=(1, 2)).mean()
         return loss_AD
 
