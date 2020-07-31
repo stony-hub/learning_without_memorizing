@@ -40,10 +40,7 @@ class Model:
 
             ########################################################
 
-            cnt = 0
             for x, y in train_loader:
-                cnt += 1
-                if cnt > 5: break
                 x, y = x.cuda(), y.cuda()
                 y_pred = self.net_new(x)
                 loss_C = F.cross_entropy(y_pred, y).mean()
@@ -100,11 +97,10 @@ class Model:
         weight_n = grads_n.mean(dim=(2, 3)).unsqueeze(-1).unsqueeze(-1)
         
         cam_o = (grads_o * weight_o).sum(dim=1)
-        cam_o = cam_o / cam_o.norm()
         cam_n = (grads_n * weight_n).sum(dim=1)
-        cam_n = cam_n / cam_n.norm()
-        
         cam_o, cam_n = F.relu(cam_o), F.relu(cam_n)
+        cam_o = cam_o / cam_o.norm()
+        cam_n = cam_n / cam_n.norm()
         
         loss_AD = (cam_o - cam_n).norm(p=1, dim=(1, 2)).mean()
         return loss_AD
@@ -120,10 +116,8 @@ class Model:
             losses, loss_Cs, loss_Ds, loss_ADs = [], [], [], []
 
             ########################################################
-            cnt = 0
+            
             for x, y in train_loader:
-                cnt += 1
-                if cnt > 5: break
                 x, y = x.cuda(), y.cuda()
                 y_pred_old = self.net_old(x)
                 y_pred_new = self.net_new(x)
