@@ -42,7 +42,7 @@ class Model:
 
             for x, y in train_loader:
                 x, y = x.cuda(), y.cuda()
-                y_pred = self.net_new(x)
+                y_pred = self.net_new(x)[:, :self.class_per_task]
                 loss_C = F.cross_entropy(y_pred, y).mean()
                 loss = loss_C
 
@@ -58,13 +58,13 @@ class Model:
             loss = np.array(losses, dtype=np.float).mean()
             loss_C = np.array(loss_Cs, dtype=np.float).mean()
             
-            print('epoch %d, task %d' % (epoch, 0))
+            print('| epoch %d, task %d, train_loss %.4f' % (epoch, 0, loss))
 
             self.writer.add_scalar('train_loss', loss, epoch)
             self.writer.add_scalar('train_loss_C', loss_C, epoch)
 
             if epoch % 2 == 0:
-                self.test(epoch)
+                self.test(epoch, self.class_per_task)
 
         ############################################################
         # training on the other tasks
@@ -81,31 +81,31 @@ class Model:
             self.test_loaders.append(test_loader)
 
             # transferring
-            self.transfer(ntask, niter, train_loader, lr, beta, gamma)
+            self.transfer(ntask, niter, train_loader, lr, beta, gamma, (ntask + 1) * self.class_per_task)
     
     def grad_cam_loss(self, feature_o, out_o, feature_n, out_n):
         batch = out_n.size()[0]
-        index = np.argmax(out_n.detach().cpu().numpy(), axis=-1)
-        onehot = np.zeros((batch, out_n.size()[1]), dtype=np.float32)
-        onehot[np.arange(0, batch), index] = 1
-        onehot = torch.from_numpy(onehot).to(out_n.device)
+        index = out_n.argmax(dim=-1).view(-1, 1)
+        onehot = torch.zeros_like(out_n)
+        onehot.scatter_(-1, index, 1.)
         out_o, out_n = torch.sum(onehot * out_o), torch.sum(onehot * out_n)
         
         grads_o = torch.autograd.grad(out_o, feature_o)[0]
         grads_n = torch.autograd.grad(out_n, feature_n, create_graph=True)[0]
-        weight_o = grads_o.mean(dim=(2, 3)).unsqueeze(-1).unsqueeze(-1)
-        weight_n = grads_n.mean(dim=(2, 3)).unsqueeze(-1).unsqueeze(-1)
+        weight_o = grads_o.mean(dim=(2, 3)).view(batch, -1, 1, 1)
+        weight_n = grads_n.mean(dim=(2, 3)).view(batch, -1, 1, 1)
         
-        cam_o = (grads_o * weight_o).sum(dim=1)
-        cam_n = (grads_n * weight_n).sum(dim=1)
-        cam_o, cam_n = F.relu(cam_o), F.relu(cam_n)
-        cam_o = cam_o / cam_o.norm()
-        cam_n = cam_n / cam_n.norm()
+        cam_o = F.relu((grads_o * weight_o).sum(dim=1))
+        cam_n = F.relu((grads_n * weight_n).sum(dim=1))
         
-        loss_AD = (cam_o - cam_n).norm(p=1, dim=(1, 2)).mean()
+        # normalization
+        cam_o = F.normalize(cam_o.view(batch, -1), p=2, dim=-1)
+        cam_n = F.normalize(cam_n.view(batch, -1), p=2, dim=-1)
+        
+        loss_AD = (cam_o - cam_n).norm(p=1, dim=1).mean()
         return loss_AD
 
-    def transfer(self, ntask, niter, train_loader, lr, beta, gamma):
+    def transfer(self, ntask, niter, train_loader, lr, beta, gamma, lim):
         opt = Adam(self.net_new.parameters(), lr=lr)
 
         for epoch in range(niter):
@@ -119,16 +119,14 @@ class Model:
             
             for x, y in train_loader:
                 x, y = x.cuda(), y.cuda()
-                y_pred_old = self.net_old(x)
-                y_pred_new = self.net_new(x)
+                y_pred_old = self.net_old(x)[:, :lim - self.class_per_task]
+                y_pred_new = self.net_new(x)[:, :lim]
 
                 loss_C = F.cross_entropy(y_pred_new, y).mean()
                 
-                yn, yo = y_pred_new[:, :ntask * self.class_per_task], y_pred_old[:, :ntask * self.class_per_task].detach()
-                yn_p, yo_p = (yn / 2).sigmoid(), (yo / 2).sigmoid()
-                loss_D = F.binary_cross_entropy(yn_p, yo_p, reduction='none').sum(dim=-1).mean()
+                loss_D = F.binary_cross_entropy_with_logits(y_pred_new[:, :-self.class_per_task], y_pred_old.detach().sigmoid())
                 
-                loss_AD = self.grad_cam_loss(self.net_old.feature, y_pred_old, self.net_new.feature, y_pred_new)
+                loss_AD = self.grad_cam_loss(self.net_old.feature, y_pred_old, self.net_new.feature, y_pred_new[:, :-self.class_per_task])
 
                 loss = loss_C + loss_D * beta + loss_AD * gamma
 
@@ -150,7 +148,7 @@ class Model:
             loss_D = np.array(loss_Ds, dtype=np.float).mean()
             loss_AD = np.array(loss_ADs, dtype=np.float).mean()
             
-            print('epoch %d, task %d' % (epoch, ntask))
+            print('| epoch %d, task %d, train_loss %.4f, train_loss_C %.4f, train_loss_D %.4f, train_loss_AD %.4f' % (epoch, ntask, loss, loss_C, loss_D, loss_AD))
 
             self.writer.add_scalar('train_loss', loss, epoch + niter * ntask)
             self.writer.add_scalar('train_loss_C', loss_C, epoch + niter * ntask)
@@ -158,9 +156,9 @@ class Model:
             self.writer.add_scalar('train_loss_AD', loss_AD, epoch + niter * ntask)
 
             if epoch % 2 == 0:
-                self.test(epoch + niter * ntask)
+                self.test(epoch + niter * ntask, (ntask + 1) * self.class_per_task)
 
-    def test(self, total_epoch):
+    def test(self, total_epoch, lim):
         self.net_new.eval()
         with torch.no_grad():
             cor_num, total_num = 0, 0
@@ -168,14 +166,22 @@ class Model:
                 correct_num, total = 0, 0
                 for x, y in test_loader:
                     x, y = x.cuda(), y.numpy()
-                    y_pred = self.net_new(x)
-                    y_pred, y_ = y_pred.cpu().numpy().argmax(axis=-1), y_pred
+                    # ------------------------
+                    # task incremental setting
+                    # y_pred = self.net_new(x)[:, ntask * self.class_per_task:(ntask + 1) * self.class_per_task].cpu().numpy()
+                    # y -=  ntask * self.class_per_task
+                    # ------------------------
+                    # class incremental setting
+                    y_pred = self.net_new(x)[:, :lim].cpu().numpy()
+                    # ------------------------
+                    y_pred= y_pred.argmax(axis=-1)
                     correct_num += (y_pred == y).sum()
                     total += y.shape[0]
-                print(y_.mean(dim=0))
                 acc = correct_num / total * 100
                 cor_num += correct_num
                 total_num += total
                 self.writer.add_scalar('test_acc_%d' % ntask, acc, total_epoch)
+                print('test_acc_%d %.4f' % (ntask, acc))
             acc = cor_num / total_num * 100
             self.writer.add_scalar('test_acc_total', acc, total_epoch)
+            print('test_acc_total %.4f' % acc)
